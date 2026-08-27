@@ -39,6 +39,42 @@ def parse_llm_json(content: str) -> dict:
     except Exception:
         return {}
 
+SYSTEM_PROMPT = (
+    "You are an AI assistant modeled after JARVIS from Marvel's Avengers. "
+    "You are direct, witty, efficient, loyal, and concise. "
+    "Always address the user as 'Boss'. "
+    "Keep responses short (1-2 sentences) so they sound natural when spoken."
+)
+
+# Maintain in-memory chat session context
+CHAT_HISTORY = [
+    {"role": "system", "content": SYSTEM_PROMPT}
+]
+
+def chat_with_llm(user_input: str) -> str:
+    """Fallback handler for general conversation with multi-turn memory context."""
+    global CHAT_HISTORY
+    try:
+        # Append user message to active history
+        CHAT_HISTORY.append({"role": "user", "content": user_input})
+        
+        # Keep sliding context window to avoid memory bloat (System prompt + last 10 messages)
+        if len(CHAT_HISTORY) > 11:
+            CHAT_HISTORY = [CHAT_HISTORY[0]] + CHAT_HISTORY[-10:]
+
+        response = ollama.chat(
+            model=OLLAMA_MODEL,
+            messages=CHAT_HISTORY
+        )
+        
+        reply = response['message']['content'].strip()
+        # Append assistant response to history
+        CHAT_HISTORY.append({"role": "assistant", "content": reply})
+        return reply
+
+    except Exception as e:
+        return f"Apologies Boss, I encountered an issue processing that: {e}"
+
 def generate_contextual_message(contact_name: str, original_command: str) -> str:
     """Polishes raw spoken intent into a clean, grammatically correct message."""
     try:
