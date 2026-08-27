@@ -360,29 +360,70 @@ def clear_whatsapp_chat(contact_name: str, confirm_callback=None) -> str:
     except Exception as e:
         return f"Failed to clear chat history: {e}"
 
-def check_and_clean_spam_messages(chat_messages: list) -> str:
-    """
-    Public entry point for scanning a list of messages.
-    Runs the asynchronous batch scan synchronously inside the existing event loop.
-    """
-    if not chat_messages:
-        return "No messages provided to scan."
+async def check_and_clean_spam_messages(speak_func=None, confirm_callback=None) -> str:
+    """Scans open WhatsApp chats for spam/phishing messages using GUI automation and Ollama."""
+    if speak_func:
+        speak_func("Scanning your recent WhatsApp chats for spam and phishing messages...")
 
-    # Execute the async batch scan using asyncio.run
-    scan_results = asyncio.run(batch_scan_messages_async(chat_messages))
-    
-    flagged_messages = [res for res in scan_results if res["is_spam"]]
+    scanned_messages = []
+
+    with UIStateGuard():
+        subprocess.run('cmd /c start whatsapp:', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not focus_whatsapp_window(timeout=10.0):
+            return "Failed to focus WhatsApp window."
+
+        time.sleep(WHATSAPP_LAUNCH_DELAY)
+
+        # Coordinates/positions for recent top chat items
+        chat_y_positions = [200, 270, 340, 410, 480]
+
+        for pos_y in chat_y_positions:
+            try:
+                # Click chat in sidebar
+                pyautogui.click(x=300, y=pos_y)
+                time.sleep(0.8)
+
+                # Click message pane, select all text, copy to clipboard
+                pyautogui.click(x=900, y=500)
+                time.sleep(0.3)
+                pyautogui.hotkey('ctrl', 'a')
+                pyautogui.hotkey('ctrl', 'c')
+                time.sleep(0.4)
+
+                content = pyperclip.paste().strip()
+                if content and len(content) >= 5:
+                    scanned_messages.append({"text": content[:1000]})
+            except Exception as e:
+                print(f"Failed scanning chat position {pos_y}: {e}")
+
+    if not scanned_messages:
+        return "No readable chat content found to scan."
+
+    # Analyze extracted content via Ollama
+    flagged_messages = []
+    for item in scanned_messages:
+        prompt = (
+            f"Analyze this chat snippet for spam, phishing, scams, or suspicious links:\n'{item['text']}'\n"
+            "Return JSON: {\"is_spam\": true/false, \"reason\": \"brief reason\"}"
+        )
+        try:
+            response = ollama.chat(model=OLLAMA_MODEL, messages=[{"role": "user", "content": prompt}])
+            parsed = parse_llm_json(response["message"]["content"].strip())
+            if parsed.get("is_spam"):
+                flagged_messages.append({"reason": parsed.get("reason", "Suspicious content"), "text": item["text"]})
+        except Exception:
+            continue
 
     if not flagged_messages:
-        return f"Scan complete. Examined {len(chat_messages)} messages — no security threats or spam detected."
+        return f"Scan complete. Examined {len(scanned_messages)} recent chat threads — no security threats detected."
 
-    summary = f"Scan complete. Found {len(flagged_messages)} suspicious message(s):\n"
+    summary = f"Scan complete. Flagged {len(flagged_messages)} suspicious chat(s):\n"
     for item in flagged_messages:
         summary += f"- Reason: {item['reason']} | Snippet: '{item['text'][:40]}...'\n"
 
     return summary
 
-def check_and_clean_promotional_chats(speak_func, confirm_callback) -> str:
+async def check_and_clean_promotional_chats(speak_func, confirm_callback) -> str:
     try:
         speak_func("Scanning your recent chats for business promotional and reminder messages.")
         subprocess.run('cmd /c start whatsapp:', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

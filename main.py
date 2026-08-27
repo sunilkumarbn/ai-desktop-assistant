@@ -5,10 +5,10 @@ import time
 import speech_recognition as sr
 import pyttsx3
 import pyaudio
+import asyncio
 import ollama
 from vosk import KaldiRecognizer, Model
-
-from config import MODEL_PATH, OLLAMA_MODEL
+from config import OLLAMA_MODEL, MODEL_PATH
 from ai_handler import clean_repeated_speech, analyze_intent_with_llm
 from actions import (
     stop_music, next_music, previous_music, change_music, play_local_music,
@@ -178,11 +178,13 @@ def process_command(user_input: str):
                     return
 
     if any(phrase in text for phrase in ["spam", "phishing", "scam"]):
-        speak(check_and_clean_spam_messages(speak, confirm_action))
+        result = asyncio.run(check_and_clean_spam_messages(speak, confirm_action))
+        speak(result)
         return
 
     if any(phrase in text for phrase in ["promotional", "business chat", "promo messages", "reminder chats", "junk chats"]):
-        speak(check_and_clean_promotional_chats(speak, confirm_action))
+        result = asyncio.run(check_and_clean_promotional_chats(speak, confirm_action))
+        speak(result)
         return
 
     if any(phrase in text for phrase in ["class link", "schedule a class", "send class schedule", "send meet link", "discussion class"]):
