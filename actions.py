@@ -19,6 +19,7 @@ import asyncio
 from ollama import AsyncClient
 from config import OLLAMA_MODEL
 import pygetwindow as gw
+from config import OLLAMA_MODEL, WHATSAPP_LAUNCH_DELAY, SEARCH_DELAY
 
 def play_local_music(song_name: str = "") -> str:
     if not os.path.exists(MUSIC_DIR):
@@ -435,7 +436,7 @@ def check_and_clean_promotional_chats(speak_func, confirm_callback) -> str:
 def send_class_schedule_now(speak_func, confirm_callback) -> str:
     target_groups = ["STAGE-2", "STAGE-1", "GENAI-AGENTIC-AI"]
     speak_func("Fetching today's Google Meet link and broadcasting to your study groups...")
-    
+
     try:
         meet_link = get_todays_google_meet_link()
     except Exception:
@@ -445,30 +446,43 @@ def send_class_schedule_now(speak_func, confirm_callback) -> str:
         "Hey everyone! 🚀 Today's discussion session on Python will be at 7:00 PM. "
         f"\nJoin Link : {meet_link}"
     )
-    
-    success_count = 0
-    for group_name in target_groups:
-    try:
-        result = send_whatsapp_to_contact(
-            contact_name=group_name,
-            message=message,
-            speak_func=speak_func,
-            confirm_callback=confirm_callback
-        )
-        print(f"Broadcast [{group_name}]: {result}")
-        if "Successfully sent" in result:
-            success_count += 1
-        time.sleep(3.0)
-    except Exception as e:
-        print(f"Failed for {group_name}: {e}")
+
+    success_count = 0  # Placed OUTSIDE the loop
+    for group_name in target_groups:  # Single loop iteration
+        try:
+            result = send_whatsapp_to_contact(
+                contact_name=group_name,
+                message=message,
+                speak_func=speak_func,
+                confirm_callback=confirm_callback
+            )
+            print(f"Broadcast [{group_name}]: {result}")
+            if "Successfully sent" in result:
+                success_count += 1
+            time.sleep(3.0)
+        except Exception as e:
+            print(f"Failed for {group_name}: {e}")
 
     return f"Class schedule link successfully sent to {success_count} groups!"
+
 class UIStateGuard:
     """Ensures keyboard modifiers and global application states reset safely on exit/error."""
     def __enter__(self):
         # Save original clipboard content if needed
         self.original_clipboard = pyperclip.paste()
         return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # 1. Release all potentially stuck modifier keys
+        for key in ['ctrl', 'alt', 'shift', 'win']:
+            pyautogui.keyUp(key)
+
+        # 2. Reset clipboard to prevent leaking sensitive messaging text
+        try:
+            pyperclip.copy("")
+        except Exception:
+            pass
+
 
 def focus_whatsapp_window(timeout=10.0) -> bool:
     """Focuses the active WhatsApp Desktop window if running."""
@@ -482,18 +496,4 @@ def focus_whatsapp_window(timeout=10.0) -> bool:
             win.activate()
             return True
         time.sleep(0.5)
-    return False    
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        # 1. Release all potentially stuck modifier keys
-        for key in ['ctrl', 'alt', 'shift', 'win']:
-            pyautogui.keyUp(key)
-
-        # 2. Reset clipboard to prevent leaking sensitive messaging text
-        try:
-            pyperclip.copy("")
-        except Exception:
-            pass
-
-        # Returning False allows exceptions to propagate to caller for proper logging
-        return False
+    return False
