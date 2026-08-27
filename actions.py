@@ -18,6 +18,7 @@ from rapidfuzz import process, fuzz
 import asyncio
 from ollama import AsyncClient
 from config import OLLAMA_MODEL
+import pygetwindow as gw
 
 def play_local_music(song_name: str = "") -> str:
     if not os.path.exists(MUSIC_DIR):
@@ -126,13 +127,53 @@ def open_application(app_name: str = "") -> str:
     webbrowser.open(f"https://www.google.com/search?q={urllib.parse.quote(app_name)}")
     return f"Searching online for '{app_name}'."
 
-def close_application(app_name: str = "") -> str:
-    app_name = app_name.lower().strip()
+
+APP_ALIASES = {
+    "vs code": "code",
+    "vscode": "code",
+    "visual studio code": "code",
+    "whatsapp": "whatsapp",
+    "chrome": "chrome",
+    "notepad": "notepad",
+}
+
+def close_application(app_name: str) -> str:
+    """Closes an application by process name, AppOpener alias, or window title."""
+    if not app_name:
+        return "No application name provided to close."
+
+    clean_name = app_name.lower().strip()
+    target = APP_ALIASES.get(clean_name, clean_name)
+
     try:
-        close_app(app_name, match_closest=True, output=False)
-        return f"Closing {app_name}."
+        # 1. Attempt graceful close via AppOpener
+        close(target, match_closest=True, output=False)
+        return f"Closed {app_name}."
     except Exception:
-        return f"Could not find running application named '{app_name}'."
+        pass
+
+    try:
+        # 2. Fallback: Force kill via Windows taskkill process matching
+        result = subprocess.run(
+            f"taskkill /f /im {target}.exe",
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        if result.returncode == 0:
+            return f"Closed {app_name}."
+
+        # 3. Fallback: Find matching window title and close it
+        windows = [w for w in gw.getAllWindows() if clean_name in w.title.lower()]
+        if windows:
+            for win in windows:
+                win.close()
+            return f"Closed window matching '{app_name}'."
+
+    except Exception as e:
+        return f"Failed to close {app_name}: {e}"
+
+    return f"Could not find a running process for '{app_name}'."
 
 # Define your known contacts and group names here
 CONTACTS_LIST = {
@@ -197,41 +238,56 @@ async def batch_scan_messages_async(message_list: list) -> list:
     return results
 
 
-def send_whatsapp_to_contact(contact_name: str, message: str = "", original_command: str = "", speak_func=None, confirm_callback=None) -> str:
-    # 1. Parsing and prompt validation
-    try:
-        prompt = (
-            f"Analyze this voice command for sending a WhatsApp message: '{original_command or contact_name}'. "
-            "Extract two fields: 'recipient' (the name of the person or group being messaged) and 'message_body' (what to say). "
-            "If no clear, valid person or group name is provided, set 'recipient' to 'NONE'. "
-            "Return ONLY a valid JSON object with keys 'recipient' and 'message_body'."
-        )
-        
-        response = ollama.chat(model=OLLAMA_MODEL, messages=[{"role": "user", "content": prompt}])
-        parsed = parse_llm_json(response["message"]["content"].strip())
-        
-        extracted_contact = parsed.get("recipient", "NONE").strip()
-        extracted_message = parsed.get("message_body", "").strip()
+def send_whatsapp_to_contact(contact_name: str = "", message: str = "", original_command: str = "", speak_func=None, confirm_callback=None) -> str:
+    """
+    Sends a WhatsApp message using PyAutoGUI. Bypasses LLM parsing if contact_name 
+    is provided directly (e.g. broadcasts), otherwise parses raw voice strings via Ollama.
+    """
+    # 1. Contact and Message Resolution
+    if contact_name and contact_name.strip():
+        # Direct call: Bypass Ollama LLM extraction completely
+        clean_contact = find_matching_contact(contact_name.strip())
+        message = message or f"Hello {clean_contact}!"
+    else:
+        # Voice command call: Extract target and payload via Ollama
+        try:
+            target_text = original_command or contact_name
+            if not target_text:
+                return "No voice command or contact name provided."
 
-        if not extracted_contact or extracted_contact.upper() == "NONE" or len(extracted_contact) < 2:
-            return "I couldn't identify a valid contact or group name to send the message to."
+            prompt = (
+                f"Analyze this voice command for sending a WhatsApp message: '{target_text}'. "
+                "Extract two fields: 'recipient' (the name of the person or group being messaged) and 'message_body' (what to say). "
+                "If no clear, valid person or group name is provided, set 'recipient' to 'NONE'. "
+                "Return ONLY a valid JSON object with keys 'recipient' and 'message_body'."
+            )
+            
+            response = ollama.chat(model=OLLAMA_MODEL, messages=[{"role": "user", "content": prompt}])
+            parsed = parse_llm_json(response["message"]["content"].strip())
+            
+            extracted_contact = parsed.get("recipient", "NONE").strip()
+            extracted_message = parsed.get("message_body", "").strip()
 
-        clean_contact = find_matching_contact(extracted_contact)
+            if not extracted_contact or extracted_contact.upper() == "NONE" or len(extracted_contact) < 2:
+                return "I couldn't identify a valid contact or group name to send the message to."
 
-        if not message:
-            message = extracted_message if extracted_message else f"Hello {clean_contact}!"
-        else:
-            message = generate_contextual_message(clean_contact, message)
+            clean_contact = find_matching_contact(extracted_contact)
+            
+            if not message:
+                message = extracted_message if extracted_message else f"Hello {clean_contact}!"
+            else:
+                message = generate_contextual_message(clean_contact, message)
 
-        if confirm_callback:
-            confirmed = confirm_callback(f"I am about to send a message to '{clean_contact}'. Shall I proceed?")
-            if not confirmed:
-                return f"Message to {clean_contact} was cancelled for safety."
+        except Exception as e:
+            return f"Failed during message preparation: {e}"
 
-    except Exception as e:
-        return f"Failed during message preparation: {e}"
+    # 2. Confirmation Check
+    if confirm_callback:
+        confirmed = confirm_callback(f"I am about to send a message to '{clean_contact}'. Shall I proceed?")
+        if not confirmed:
+            return f"Message to {clean_contact} was cancelled for safety."
 
-    # 2. Protected GUI Automation block using state guard
+    # 3. Protected GUI Automation Execution
     with UIStateGuard():
         try:
             subprocess.run('cmd /c start whatsapp:', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -386,19 +442,25 @@ def send_class_schedule_now(speak_func, confirm_callback) -> str:
         meet_link = "https://meet.google.com/rgx-ysrj-heo"
 
     message = (
-        "Hey everyone! 🚀 Our daily discussion session will be held on Google Meet at 7:00 PM Today. "
+        "Hey everyone! 🚀 Today's discussion session on Python will be at 7:00 PM. "
         f"\nJoin Link : {meet_link}"
     )
     
     success_count = 0
     for group_name in target_groups:
-        try:
-            result = send_whatsapp_to_contact(group_name, message, "Daily discussion class alert", speak_func, confirm_callback)
-            print(f"Broadcast [{group_name}]: {result}")
+    try:
+        result = send_whatsapp_to_contact(
+            contact_name=group_name,
+            message=message,
+            speak_func=speak_func,
+            confirm_callback=confirm_callback
+        )
+        print(f"Broadcast [{group_name}]: {result}")
+        if "Successfully sent" in result:
             success_count += 1
-            time.sleep(3.0)
-        except Exception as e:
-            print(f"Failed for {group_name}: {e}")
+        time.sleep(3.0)
+    except Exception as e:
+        print(f"Failed for {group_name}: {e}")
 
     return f"Class schedule link successfully sent to {success_count} groups!"
 class UIStateGuard:
@@ -407,6 +469,20 @@ class UIStateGuard:
         # Save original clipboard content if needed
         self.original_clipboard = pyperclip.paste()
         return self
+
+def focus_whatsapp_window(timeout=10.0) -> bool:
+    """Focuses the active WhatsApp Desktop window if running."""
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        windows = [w for w in gw.getAllWindows() if "whatsapp" in w.title.lower()]
+        if windows:
+            win = windows[0]
+            if win.isMinimized:
+                win.restore()
+            win.activate()
+            return True
+        time.sleep(0.5)
+    return False    
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         # 1. Release all potentially stuck modifier keys
