@@ -375,23 +375,25 @@ async def check_and_clean_spam_messages(speak_func=None, confirm_callback=None) 
         time.sleep(WHATSAPP_LAUNCH_DELAY)
 
         # Coordinates/positions for recent top chat items
-        chat_y_positions = [200, 270, 340, 410, 480]
+        # Lower y-spacing to tightly hit all 5 visible sidebar chats
+        chat_y_positions = [240, 300, 360, 420, 480]
 
         for pos_y in chat_y_positions:
             try:
-                # Click chat in sidebar
-                pyautogui.click(x=300, y=pos_y)
-                time.sleep(0.8)
+                # Click individual chat item in sidebar list
+                pyautogui.click(x=150, y=pos_y)
+                time.sleep(0.6)
 
-                # Click message pane, select all text, copy to clipboard
-                pyautogui.click(x=900, y=500)
+                # Focus message panel, copy content
+                pyautogui.click(x=600, y=500)
                 time.sleep(0.3)
                 pyautogui.hotkey('ctrl', 'a')
                 pyautogui.hotkey('ctrl', 'c')
                 time.sleep(0.4)
 
                 content = pyperclip.paste().strip()
-                if content and len(content) >= 5:
+                # Accept shorter messages (>= 2 chars) and avoid placeholder text
+                if content and len(content) >= 2 and "Add to Favourites" not in content:
                     scanned_messages.append({"text": content[:1000]})
             except Exception as e:
                 print(f"Failed scanning chat position {pos_y}: {e}")
