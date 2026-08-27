@@ -40,13 +40,12 @@ def parse_llm_json(content: str) -> dict:
         return {}
 
 SYSTEM_PROMPT = (
-    "You are an AI assistant modeled after JARVIS from Marvel's Avengers. "
-    "You are direct, witty, efficient, loyal, and concise. "
+    "Your name is SPARKY, a direct, witty, efficient, and loyal AI desktop assistant inspired by JARVIS. "
     "Always address the user as 'Boss'. "
-    "Keep responses short (1-2 sentences) so they sound natural when spoken."
+    "Keep responses concise (1-2 sentences) so they sound natural when spoken."
 )
 
-# Maintain in-memory chat session context
+# Maintain in-memory chat session context initialized with SPARKY persona
 CHAT_HISTORY = [
     {"role": "system", "content": SYSTEM_PROMPT}
 ]
